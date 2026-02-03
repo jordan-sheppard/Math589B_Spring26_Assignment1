@@ -152,35 +152,41 @@ void rod_energy_grad(
     const double WCA_CUTOFF_SQ = std::pow(2.0, 1.0/3.0) * sigma * sigma;
     const double SIGMA_SQ = sigma * sigma;
 
-    // Helper lambda: Computes WCA energy and gradient factor
+    // Helper lambda: Computes WCA energy and gradient factor.
+    // Returns true if interaction occurred (d2 < cutoff).
+
     auto compute_wca = [&](double d2, double* e_val, double* g_fac) -> bool {
         if (d2 >= WCA_CUTOFF_SQ || d2 < 1e-14) return false;
 
-        // Prevent division by zero or massive explosion for overlapping segments
-        // Treat anything closer than 1e-6 as effectively 1e-6 deep
-        double effective_d2 = d2;
-
-        double R = SIGMA_SQ / effective_d2; 
+        double R = SIGMA_SQ / d2; 
         double R3 = R * R * R;      
         double R6 = R3 * R3;        
 
         *e_val = 4.0 * eps * (R6 - R3) + eps;
-        *g_fac = (24.0 * eps / effective_d2) * (R3 - 2.0 * R6);
+
+        // Gradient Factor K = U'(d) / d
+        // U'(d) = (24 eps / d) * (R^3 - 2R^6)
+        // K = (24 eps / d^2) * (R^3 - 2R^6)
+        // Since R^3 < 2R^6 for d < cutoff, this factor is NEGATIVE.
+        // Gradient vector = K * r_vec.
+        // Since r_vec points OUT, a negative factor makes the gradient point IN (uphill).
+        *g_fac = (24.0 * eps / d2) * (R3 - 2.0 * R6);
+        
         return true;
     };
 
     // Loop unique pairs of SEGMENTS (not nodes!)
     for (int i = 0; i < N; ++i) {
-        // j starts at i+1. We only look "forward" in indices to avoid double counting.
+        // j starts at i+1 to avoid double counting
         for (int j = i + 1; j < N; ++j) {
             
-            // 1. EXCLUSION LOGIC
-            // We must exclude interactions if segments are topologically close.
-            // Forward distance: j - i
-            // Backward distance: N - (j - i)  <-- This catches the wrap-around neighbors!
+            // 1. ROBUST EXCLUSION
+            // Calculate distance in both directions around the ring
             int diff = j - i;
+            
+            // Exclude if neighbors (diff <= 2) OR wrap-neighbors (N-diff <= 2)
             if (diff <= 2 || (N - diff) <= 2) {
-                continue; // Skip neighbors (i, i+1), (i, i+2) AND wraps (0, N-1), (0, N-2)
+                continue; 
             }
             // 1. Quadratic Coefficients
             double pi[3], pi_next[3], pj[3], pj_next[3];
@@ -230,14 +236,19 @@ void rod_energy_grad(
             if (compute_wca(d2, &wca_E, &wca_factor)) {
                 E += wca_E;
 
-                // Distribute forces barycentrically
+                // Apply Gradient
+                // Vector = wca_factor * r_vec
+                // Because wca_factor is negative, this vector points TOWARDS the other segment.
                 for (int k = 0; k < 3; ++k) {
-                    double f_val = wca_factor * r_vec[k];
+                    double g_val = wca_factor * r_vec[k];
 
-                    addg(i,   k, (1.0 - u_star) * f_val);
-                    addg(i+1, k, u_star         * f_val);
-                    addg(j,   k, -(1.0 - v_star) * f_val);
-                    addg(j+1, k, -v_star        * f_val);
+                    // Segment i (barycentric distribution)
+                    addg(i,   k, (1.0 - u_star) * g_val);
+                    addg(i+1, k, u_star         * g_val);
+
+                    // Segment j (Newton's 3rd law: opposite direction)
+                    addg(j,   k, -(1.0 - v_star) * g_val);
+                    addg(j+1, k, -v_star        * g_val);
                 }
             }
         }
