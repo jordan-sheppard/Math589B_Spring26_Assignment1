@@ -169,23 +169,18 @@ void rod_energy_grad(
         return true;
     };
 
-    // Loop unique pairs.
-    // i only needs to go up to N-3, because j starts at i+3.
-    for (int i = 0; i < N - 3; ++i) {
-        
-        // Start j at i + 3 to automatically exclude:
-        //  - self (i)
-        //  - adjacent (i+1)
-        //  - next-nearest (i+2)
-        for (int j = i + 3; j < N; ++j) {
+    // Loop unique pairs of SEGMENTS (not nodes!)
+    for (int i = 0; i < N; ++i) {
+        // j starts at i+1. We only look "forward" in indices to avoid double counting.
+        for (int j = i + 1; j < N; ++j) {
             
-            // WRAP-AROUND CHECK:
-            // Check if j is too close to i from the OTHER side of the loop.
-            // The distance walking backwards from i to j is N - (j - i).
-            // We want to exclude if that distance is 1 (neighbor) or 2 (next-nearest).
-            int dist_backward = N - (j - i);
-            if (dist_backward <= 2) {
-                continue; 
+            // 1. EXCLUSION LOGIC
+            // We must exclude interactions if segments are topologically close.
+            // Forward distance: j - i
+            // Backward distance: N - (j - i)  <-- This catches the wrap-around neighbors!
+            int diff = j - i;
+            if (diff <= 2 || (N - diff) <= 2) {
+                continue; // Skip neighbors (i, i+1), (i, i+2) AND wraps (0, N-1), (0, N-2)
             }
             // 1. Quadratic Coefficients
             double pi[3], pi_next[3], pj[3], pj_next[3];
