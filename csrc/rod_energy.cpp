@@ -158,7 +158,7 @@ void rod_energy_grad(
 
         // Prevent division by zero or massive explosion for overlapping segments
         // Treat anything closer than 1e-6 as effectively 1e-6 deep
-        double effective_d2 = std::max(d2, 1e-12);
+        double effective_d2 = d2;
 
         double R = SIGMA_SQ / effective_d2; 
         double R3 = R * R * R;      
