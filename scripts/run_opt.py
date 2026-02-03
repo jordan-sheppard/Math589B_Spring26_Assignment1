@@ -23,7 +23,7 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    X0 = random_loop(args.N, radius=7.0, noise=0.5, seed=args.seed)
+    X0 = random_loop(args.N, radius=7.0, noise=0.05, seed=args.seed)
     x0 = pack(X0)
 
     # Tuned defaults that (once WCA is implemented) tend to produce packed/coiled states.

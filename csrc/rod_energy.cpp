@@ -156,20 +156,37 @@ void rod_energy_grad(
     auto compute_wca = [&](double d2, double* e_val, double* g_fac) -> bool {
         if (d2 >= WCA_CUTOFF_SQ || d2 < 1e-14) return false;
 
-        double R = SIGMA_SQ / d2; 
+        // Prevent division by zero or massive explosion for overlapping segments
+        // Treat anything closer than 1e-6 as effectively 1e-6 deep
+        double effective_d2 = std::max(d2, 1e-12);
+
+        double R = SIGMA_SQ / effective_d2; 
         double R3 = R * R * R;      
         double R6 = R3 * R3;        
 
         *e_val = 4.0 * eps * (R6 - R3) + eps;
-        *g_fac = (24.0 * eps / d2) * (R3 - 2.0 * R6);
+        *g_fac = (24.0 * eps / effective_d2) * (R3 - 2.0 * R6);
         return true;
     };
 
-    // Loop unique non-adjacent pairs
-    for (int i = 0; i < N - 1; ++i) {
-        for (int j = i + 2; j < N; ++j) {
-            if (i == 0 && j == N - 1) continue; // Skip wrap-around
-
+    // Loop unique pairs.
+    // i only needs to go up to N-3, because j starts at i+3.
+    for (int i = 0; i < N - 3; ++i) {
+        
+        // Start j at i + 3 to automatically exclude:
+        //  - self (i)
+        //  - adjacent (i+1)
+        //  - next-nearest (i+2)
+        for (int j = i + 3; j < N; ++j) {
+            
+            // WRAP-AROUND CHECK:
+            // Check if j is too close to i from the OTHER side of the loop.
+            // The distance walking backwards from i to j is N - (j - i).
+            // We want to exclude if that distance is 1 (neighbor) or 2 (next-nearest).
+            int dist_backward = N - (j - i);
+            if (dist_backward <= 2) {
+                continue; 
+            }
             // 1. Quadratic Coefficients
             double pi[3], pi_next[3], pj[3], pj_next[3];
             double u_vec[3], v_vec[3], r0[3];
