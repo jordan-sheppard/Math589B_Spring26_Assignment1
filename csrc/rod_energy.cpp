@@ -1,24 +1,93 @@
 #include <cmath>
 #include <algorithm>
+#include <iostream>
 
 extern "C" {
 
 // Bump when you change the exported function signatures.
 int rod_api_version() { return 2; }
 
-// Exported API (students may extend, but autograder only requires Python-level RodEnergy.value_and_grad).
-// x: length 3N (xyzxyz...)
-// grad_out: length 3N
-// Periodic indexing enforces a closed loop.
+// Subroutine implementing Algorithm 1 from Assignment 1, Q5.
+// Minimizes f(s,t) = a*s^2 + 2*b*s*t + c*t^2 + d*s + e*t
+// Subject to 0 <= s, t <= 1.
+// Requires: a > 0 and a*c - b^2 > 0 (strictly convex).
+void minimize_quadratic_box(
+    double& a, double& b, double& c, double& d, double& e,
+    double* s_out, double* t_out
+) {
+    // 1. Compute the unconstrained minimizer
+    double det = b*b - a*c; 
+    
+    // Check strict convexity/parallelism
+    if (std::abs(det) < 1e-14) {
+        *s_out = 0.5; *t_out = 0.5; 
+        return; 
+    }
+
+    double s_hat = -1.0 + (c*d - b*e) / det;
+    double t_hat = -1.0 + (a*e - b*d) / det;
+
+    // 2. Check if the unconstrained minimum is feasible
+    if (std::abs(s_hat) <= 1.0 && std::abs(t_hat) <= 1.0) {
+        *s_out = (s_hat + 1.0) / 2.0;
+        *t_out = (t_hat + 1.0) / 2.0;
+        return;
+    }
+
+    // 3. Analyze boundaries if unconstrained is infeasible
+    auto eval_f = [&](double s, double t) {
+        return a*s*s + 2.0*b*s*t + c*t*t + d*s + e*t;
+    };
+
+    double best_s = 0.0, best_t = 0.0;
+    double min_val = 1e30; 
+
+    // Case A: Boundary constrained by s
+    if (std::abs(s_hat) > 1.0) {
+        double s_hat_2 = (s_hat > 0.0) ? 1.0 : -1.0; 
+        double t_hat_2 = -1.0 - (b * (1.0 + s_hat_2) + e) / c;
+        t_hat_2 = std::max(-1.0, std::min(1.0, t_hat_2));
+        
+        double s2 = (s_hat_2 + 1.0) / 2.0;
+        double t2 = (t_hat_2 + 1.0) / 2.0;
+        double f2 = eval_f(s2, t2);
+        if (f2 < min_val) {
+            min_val = f2;
+            best_s = s2;
+            best_t = t2;
+        }
+    }
+
+    // Case B: Boundary constrained by t
+    if (std::abs(t_hat) > 1.0) {
+        double t_hat_3 = (t_hat > 0.0) ? 1.0 : -1.0; 
+        double s_hat_3 = -1.0 - (b * (1.0 + t_hat_3) + d) / a;
+        s_hat_3 = std::max(-1.0, std::min(1.0, s_hat_3));
+        
+        double s3 = (s_hat_3 + 1.0) / 2.0;
+        double t3 = (t_hat_3 + 1.0) / 2.0;
+        double f3 = eval_f(s3, t3);
+        if (f3 < min_val) {
+            min_val = f3;
+            best_s = s3;
+            best_t = t3;
+        }
+    }
+
+    *s_out = best_s;
+    *t_out = best_t;
+}
+
+// Exported API 
 void rod_energy_grad(
     int N,
     const double* x,
     double kb,
     double ks,
     double l0,
-    double kc,     // confinement strength
-    double eps,    // WCA epsilon
-    double sigma,  // WCA sigma
+    double kc,
+    double eps,
+    double sigma,
     double* energy_out,
     double* grad_out
 ) {
@@ -37,7 +106,7 @@ void rod_energy_grad(
         grad_out[3*idx(i) + d] += v;
     };
 
-    // ---- Bending: kb * ||x_{i+1} - 2 x_i + x_{i-1}||^2
+    // ---- Bending ----
     for (int i = 0; i < N; ++i) {
         for (int d = 0; d < 3; ++d) {
             const double b = get(i+1,d) - 2.0*get(i,d) + get(i-1,d);
@@ -49,7 +118,7 @@ void rod_energy_grad(
         }
     }
 
-    // ---- Stretching: ks * (||x_{i+1}-x_i|| - l0)^2
+    // ---- Stretching ----
     for (int i = 0; i < N; ++i) {
         double dx0 = get(i+1,0) - get(i,0);
         double dx1 = get(i+1,1) - get(i,1);
@@ -68,7 +137,7 @@ void rod_energy_grad(
         addg(i,2,   -coeff * dx2);
     }
 
-    // ---- Confinement: kc * sum ||x_i||^2
+    // ---- Confinement ----
     for (int i = 0; i < N; ++i) {
         for (int d = 0; d < 3; ++d) {
             double xi = get(i,d);
@@ -77,21 +146,92 @@ void rod_energy_grad(
         }
     }
 
-    // ---- TODO: Segment–segment WCA self-avoidance ----
-    //
-    // For each non-adjacent segment pair (i,i+1) and (j,j+1):
-    //  1) Compute closest points parameters u*, v* in [0,1]
-    //  2) Compute r = p_i(u*) - p_j(v*),  d = ||r||
-    //  3) If d < 2^(1/6)*sigma:
-    //       U(d) = 4 eps [ (sigma/d)^12 - (sigma/d)^6 ] + eps
-    //       Accumulate E += U(d)
-    //       Accumulate gradient to endpoints x_i, x_{i+1}, x_j, x_{j+1}
-    //
-    // Exclusions: skip adjacent segments (including wrap neighbors).
-    //
-    // IMPORTANT: You must include the dependence of (u*, v*) on endpoints in your gradient.
+    // ---- Segment-segment WCA self-avoidance ----
+    
+    // Constants
+    const double WCA_CUTOFF_SQ = std::pow(2.0, 1.0/3.0) * sigma * sigma;
+    const double SIGMA_SQ = sigma * sigma;
+
+    // Helper lambda: Computes WCA energy and gradient factor
+    auto compute_wca = [&](double d2, double* e_val, double* g_fac) -> bool {
+        if (d2 >= WCA_CUTOFF_SQ || d2 < 1e-14) return false;
+
+        double R = SIGMA_SQ / d2; 
+        double R3 = R * R * R;      
+        double R6 = R3 * R3;        
+
+        *e_val = 4.0 * eps * (R6 - R3) + eps;
+        *g_fac = (24.0 * eps / d2) * (R3 - 2.0 * R6);
+        return true;
+    };
+
+    // Loop unique non-adjacent pairs
+    for (int i = 0; i < N - 1; ++i) {
+        for (int j = i + 2; j < N; ++j) {
+            if (i == 0 && j == N - 1) continue; // Skip wrap-around
+
+            // 1. Quadratic Coefficients
+            double pi[3], pi_next[3], pj[3], pj_next[3];
+            double u_vec[3], v_vec[3], r0[3];
+            
+            for (int k = 0; k < 3; ++k) {
+                pi[k]      = get(i, k);
+                pi_next[k] = get(i + 1, k);
+                pj[k]      = get(j, k);
+                pj_next[k] = get(j + 1, k);
+                u_vec[k]   = pi_next[k] - pi[k];
+                v_vec[k]   = pj_next[k] - pj[k];
+                r0[k]      = pi[k] - pj[k];
+            }
+
+            double a_coeff = 0, b_coeff = 0, c_coeff = 0, d_coeff = 0, e_coeff = 0;
+            for (int k = 0; k < 3; ++k) {
+                a_coeff += u_vec[k] * u_vec[k];
+                c_coeff += v_vec[k] * v_vec[k];
+                b_coeff -= u_vec[k] * v_vec[k];
+                d_coeff += 2.0 * r0[k] * u_vec[k];
+                e_coeff -= 2.0 * r0[k] * v_vec[k];
+            }
+
+            // 2. Minimize Distance
+            double u_star, v_star;
+            double det_check = a_coeff * c_coeff - b_coeff * b_coeff;
+
+            if (det_check > 1e-12) {
+                minimize_quadratic_box(a_coeff, b_coeff, c_coeff, d_coeff, e_coeff, &u_star, &v_star);
+            } else {
+                u_star = 0.5; v_star = 0.5;
+            }
+
+            // 3. Recompute Geometry
+            double r_vec[3];
+            double d2 = 0.0;
+            for (int k = 0; k < 3; ++k) {
+                r_vec[k] = r0[k] + u_star * u_vec[k] - v_star * v_vec[k];
+                d2 += r_vec[k] * r_vec[k];
+            }
+
+            // 4. Energy & Force
+            double wca_E = 0.0;
+            double wca_factor = 0.0;
+
+            if (compute_wca(d2, &wca_E, &wca_factor)) {
+                E += wca_E;
+
+                // Distribute forces barycentrically
+                for (int k = 0; k < 3; ++k) {
+                    double f_val = wca_factor * r_vec[k];
+
+                    addg(i,   k, (1.0 - u_star) * f_val);
+                    addg(i+1, k, u_star         * f_val);
+                    addg(j,   k, -(1.0 - v_star) * f_val);
+                    addg(j+1, k, -v_star        * f_val);
+                }
+            }
+        }
+    }
 
     *energy_out = E;
-}
+} 
 
 } // extern "C"
