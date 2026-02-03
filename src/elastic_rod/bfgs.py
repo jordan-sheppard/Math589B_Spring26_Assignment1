@@ -42,7 +42,7 @@ def backtracking_line_search(
     if directional_derivative > 0:
         # In a robust solver, you might reset H here, but for this assignment, 
         # we'll just proceed or print a warning.
-        print("LINE SEARCH WARNING: p is not a descent direction!")
+        # print("LINE SEARCH WARNING: p is not a descent direction!")
         pass 
 
     current_fevals = 0              # Counts number of function evaluations
@@ -70,7 +70,7 @@ def backtracking_line_search(
         
     # If we run out of steps, return the last attempt (even if it failed the condition)
     # so the optimizer doesn't crash, though 'converged' flags will likely fail later.
-    print(f"LINE SEARCH WARNING: Did not converge in max_steps={max_steps} attempts. Continuing anyways...")
+    # print(f"LINE SEARCH WARNING: Did not converge in max_steps={max_steps} attempts. Continuing anyways...")
     return alpha, f_new, g_new, current_fevals
 
 def bfgs(
