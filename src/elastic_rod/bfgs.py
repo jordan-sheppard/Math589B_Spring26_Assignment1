@@ -23,7 +23,7 @@ def backtracking_line_search(
     p: np.ndarray,
     alpha0: float = 1.0,
     c1: float = 1e-4,
-    tau: float = 0.5,
+    tau: float = 1e-2,
     max_steps: int = 30,
 ) -> Tuple[float, float, np.ndarray, int]:
     """
