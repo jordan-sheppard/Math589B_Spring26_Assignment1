@@ -219,7 +219,12 @@ void rod_energy_grad(
             if (det_check > 1e-12) {
                 minimize_quadratic_box(a_coeff, b_coeff, c_coeff, d_coeff, e_coeff, &u_star, &v_star);
             } else {
-                u_star = 0.5; v_star = 0.5;
+                // Segments are parallel. 
+                // Find distance from x_i to segment j. Should be constant along rod. 
+                u_star = 0.0; 
+                // Project r0 onto v_vec to find v_star
+                v_star = (v_vec[0]*r0[0] + v_vec[1]*r0[1] + v_vec[2]*r0[2]) / c_coeff;
+                v_star = std::max(0.0, std::min(1.0, v_star));
             }
 
             // 3. Recompute Geometry
