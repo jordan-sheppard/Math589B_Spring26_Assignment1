@@ -147,116 +147,146 @@ void rod_energy_grad(
     }
 
     // ---- Segment-segment WCA self-avoidance ----
-    
-    // Constants
-    const double WCA_CUTOFF_SQ = std::pow(2.0, 1.0/3.0) * sigma * sigma;
-    const double SIGMA_SQ = sigma * sigma;
+    const double rc = std::pow(2.0, 1.0/6.0) * sigma;
 
-    // Helper lambda: Computes WCA energy and gradient factor.
-    // Returns true if interaction occurred (d2 < cutoff).
-
-    auto compute_wca = [&](double d2, double* e_val, double* g_fac) -> bool {
-        if (d2 >= WCA_CUTOFF_SQ || d2 < 1e-14) return false;
-
-        double R = SIGMA_SQ / d2; 
-        double R3 = R * R * R;      
-        double R6 = R3 * R3;
-        double d = std::sqrt(d2);        
-
-        *e_val = 4.0 * eps * (R6 - R3) + eps;
-
-        // Gradient Factor K = U'(d) / d
-        // U'(d) = (24 eps / d) * (R^3 - 2R^6)
-        // K = (24 eps / d^2) * (R^3 - 2R^6)
-        // Since R^3 < 2R^6 for d < cutoff, this factor is NEGATIVE.
-        // Gradient vector = K * r_vec.
-        // Since r_vec points OUT, a negative factor makes the gradient point IN (uphill).
-        *g_fac = (24.0 * eps / d) * (R3 - 2.0 * R6);
-        
-        return true;
+    auto dot3 = [](double ax, double ay, double az,
+                   double bx, double by, double bz) {
+        return ax*bx + ay*by + az*bz;
     };
 
-    // Loop unique pairs of SEGMENTS (not nodes!)
     for (int i = 0; i < N; ++i) {
-        // j starts at i+1 to avoid double counting
-        for (int j = i + 3; j < N; ++j) {
+        int i1 = idx(i+1);
+
+        // Segment i endpoints
+        double xi0 = get(i,0),  xi1 = get(i,1),  xi2 = get(i,2);
+        double xi10 = get(i1,0), xi11 = get(i1,1), xi12 = get(i1,2);
+
+        double di0 = xi10 - xi0;
+        double di1 = xi11 - xi1;
+        double di2 = xi12 - xi2;
+
+        for (int j = i+1; j < N; ++j) {
+
+            // ---- Exclusions: skip segments too close along the chain ----
+            int dj = std::abs(j - i);
+            dj = std::min(dj, N - dj);   // circular distance
+            if (dj <= 2) continue;
+
+            int j1 = idx(j+1);
+
+            // Segment j endpoints
+            double xj0 = get(j,0),  xj1 = get(j,1),  xj2 = get(j,2);
+            double xj10 = get(j1,0), xj11 = get(j1,1), xj12 = get(j1,2);
+
+            double dj0 = xj10 - xj0;
+            double dj1 = xj11 - xj1;
+            double dj2 = xj12 - xj2;
+
+            // Solve closest points between two segments
+            // Following standard segment–segment distance formula
+            double r0 = xi0 - xj0;
+            double r1 = xi1 - xj1;
+            double r2 = xi2 - xj2;
+
+            // --- 1. Robust Segment-Segment Distance Logic ---
             
-            // 1. ROBUST EXCLUSION
-            // Calculate distance in both directions around the ring
-            int diff = j - i;
-            
-            // Exclude if neighbors (diff <= 2) OR wrap-neighbors (N-diff <= 2)
-            if (diff <= 2 || (N - diff) <= 2) {
-                continue; 
-            }
-            // 1. Quadratic Coefficients
-            double pi[3], pi_next[3], pj[3], pj_next[3];
-            double u_vec[3], v_vec[3], r0[3];
-            
-            for (int k = 0; k < 3; ++k) {
-                pi[k]      = get(i, k);
-                pi_next[k] = get(i + 1, k);
-                pj[k]      = get(j, k);
-                pj_next[k] = get(j + 1, k);
-                u_vec[k]   = pi_next[k] - pi[k];
-                v_vec[k]   = pj_next[k] - pj[k];
-                r0[k]      = pi[k] - pj[k];
-            }
+            // 1. Calculate coefficients for the distance-squared quadratic:
+            // f(u,v) = |(xi0 + u*di) - (xj0 + v*dj)|^2
+            double a = dot3(di0, di1, di2, di0, di1, di2);
+            double b = dot3(di0, di1, di2, dj0, dj1, dj2);
+            double c = dot3(dj0, dj1, dj2, dj0, dj1, dj2);
+            double d = dot3(di0, di1, di2, r0, r1, r2);
+            double e = dot3(dj0, dj1, dj2, r0, r1, r2);
 
-            double a_coeff = 0, b_coeff = 0, c_coeff = 0, d_coeff = 0, e_coeff = 0;
-            for (int k = 0; k < 3; ++k) {
-                a_coeff += u_vec[k] * u_vec[k];
-                c_coeff += v_vec[k] * v_vec[k];
-                b_coeff -= u_vec[k] * v_vec[k];
-                d_coeff += 2.0 * r0[k] * u_vec[k];
-                e_coeff -= 2.0 * r0[k] * v_vec[k];
-            }
+            double det = a * c - b * b;
+            double u_best = 0.0, v_best = 0.0;
+            double min_sq_dist = 1e30;
 
-            // 2. Minimize Distance
-            double u_star, v_star;
-            double det_check = a_coeff * c_coeff - b_coeff * b_coeff;
+            // Lambda to check candidates and keep the best (closest) u,v pair
+            auto check_uv = [&](double u_c, double v_c) {
+                u_c = std::max(0.0, std::min(1.0, u_c));
+                v_c = std::max(0.0, std::min(1.0, v_c));
+                
+                double dx = (xi0 + u_c*di0) - (xj0 + v_c*dj0);
+                double dy = (xi1 + u_c*di1) - (xj1 + v_c*dj1);
+                double dz = (xi2 + u_c*di2) - (xj2 + v_c*dj2);
+                double sqd = dx*dx + dy*dy + dz*dz;
+                
+                if (sqd < min_sq_dist) {
+                    min_sq_dist = sqd;
+                    u_best = u_c;
+                    v_best = v_c;
+                }
+            };
 
-            if (det_check > 1e-12) {
-                minimize_quadratic_box(a_coeff, b_coeff, c_coeff, d_coeff, e_coeff, &u_star, &v_star);
-            } else {
-                // Segments are parallel. 
-                // Find distance from x_i to segment j. Should be constant along rod. 
-                u_star = 0.0; 
-                // Project r0 onto v_vec to find v_star
-                v_star = (v_vec[0]*r0[0] + v_vec[1]*r0[1] + v_vec[2]*r0[2]) / c_coeff;
-                v_star = std::max(0.0, std::min(1.0, v_star));
-            }
-
-            // 3. Recompute Geometry
-            double r_vec[3];
-            double d2 = 0.0;
-            for (int k = 0; k < 3; ++k) {
-                r_vec[k] = r0[k] + u_star * u_vec[k] - v_star * v_vec[k];
-                d2 += r_vec[k] * r_vec[k];
-            }
-
-            // 4. Energy & Force
-            double wca_E = 0.0;
-            double wca_factor = 0.0;
-
-            if (compute_wca(d2, &wca_E, &wca_factor)) {
-                E += wca_E;
-
-                // Apply Gradient
-                // Vector = wca_factor * r_vec
-                // Because wca_factor is negative, this vector points TOWARDS the other segment.
-                for (int k = 0; k < 3; ++k) {
-                    double g_val = 2 * wca_factor * r_vec[k];
-
-                    // Segment i (barycentric distribution)
-                    addg(i,   k, (1.0 - u_star) * g_val);
-                    addg(i+1, k, u_star         * g_val);
-
-                    // Segment j (Newton's 3rd law: opposite direction)
-                    addg(j,   k, -(1.0 - v_star) * g_val);
-                    addg(j+1, k, -v_star        * g_val);
+            // Case A: Unconstrained interior minimum
+            if (det > 1e-12) {
+                double u_u = (b * e - c * d) / det;
+                double v_u = (a * e - b * d) / det;
+                if (u_u >= 0.0 && u_u <= 1.0 && v_u >= 0.0 && v_u <= 1.0) {
+                    check_uv(u_u, v_u);
                 }
             }
+
+            // Case B: Check the 4 boundaries of the [0,1]x[0,1] square
+            if (a > 1e-12) {
+                check_uv(-d / a, 0.0);       // Edge v=0
+                check_uv((b - d) / a, 1.0);  // Edge v=1
+            } else {
+                check_uv(0.0, 0.0); check_uv(1.0, 0.0);
+            }
+
+            if (c > 1e-12) {
+                check_uv(0.0, e / c);        // Edge u=0
+                check_uv(1.0, (b + e) / c);  // Edge u=1
+            } else {
+                check_uv(0.0, 0.0); check_uv(0.0, 1.0);
+            }
+            
+            // Case C: Check the 4 corners explicitly
+            check_uv(0.0, 0.0); check_uv(1.0, 0.0);
+            check_uv(0.0, 1.0); check_uv(1.0, 1.0);
+
+            // 2. Compute final distance and relative vector
+            double dist = std::sqrt(min_sq_dist);
+
+            if (dist >= rc) continue;
+
+            // 3. WCA Potential and Gradient
+            double inv = sigma / dist;
+            double inv6 = std::pow(inv, 6);
+            double inv12 = inv6 * inv6;
+
+            E += 4.0 * eps * (inv12 - inv6) + eps;
+
+            // Force magnitude: dU/dr = 24 * eps * (2*inv12 - inv6) / r
+            double dUdr = 24.0 * eps * (2.0 * inv12 - inv6) / dist;
+
+            // Directional components
+            double rx0 = (xi0 + u_best * di0) - (xj0 + v_best * dj0);
+            double rx1 = (xi1 + u_best * di1) - (xj1 + v_best * dj1);
+            double rx2 = (xi2 + u_best * di2) - (xj2 + v_best * dj2);
+
+            double fx0 = 2.0 * dUdr * rx0 / dist;
+            double fx1 = 2.0 * dUdr * rx1 / dist;
+            double fx2 = 2.0 * dUdr * rx2 / dist;
+
+            // 4. Distribute forces to the 4 involved nodes
+            // Segment i: nodes (i, i1)
+            addg(i,  0, -(1.0 - u_best) * fx0);
+            addg(i,  1, -(1.0 - u_best) * fx1);
+            addg(i,  2, -(1.0 - u_best) * fx2);
+            addg(i1, 0, -u_best * fx0);
+            addg(i1, 1, -u_best * fx1);
+            addg(i1, 2, -u_best * fx2);
+
+            // Segment j: nodes (j, j1)
+            addg(j,  0, (1.0 - v_best) * fx0);
+            addg(j,  1, (1.0 - v_best) * fx1);
+            addg(j,  2, (1.0 - v_best) * fx2);
+            addg(j1, 0, v_best * fx0);
+            addg(j1, 1, v_best * fx1);
+            addg(j1, 2, v_best * fx2);
         }
     }
 

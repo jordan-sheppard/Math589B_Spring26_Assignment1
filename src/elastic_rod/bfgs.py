@@ -23,7 +23,7 @@ def backtracking_line_search(
     p: np.ndarray,
     alpha0: float = 1.0,
     c1: float = 1e-4,
-    tau: float = 0.5,
+    tau: float = 1e-2,
     max_steps: int = 30,
 ) -> Tuple[float, float, np.ndarray, int]:
     """
@@ -121,12 +121,34 @@ def bfgs(
         s = x_new - x
         y = g_new - g
         ys = np.dot(y, s)
-        if ys > 1e-10:          # Ensure positive so no division by zero
-            I = np.eye(len(s))
-            L = I - (np.outer(s, y) / ys)
-            R = I - (np.outer(y, s) / ys)
-            C = np.outer(s, s) / ys
-            H = L @ H @ R + C
+        if ys > 1e-10:
+            # Efficient O(N^2) update using the expansion of the BFGS formula:
+            # H_new = H + ( (ys + yHy) * s*s^T ) / (ys)^2  - ( Hy*s^T + s*(Hy)^T ) / ys
+            
+            Hy = H @ y                # Matrix-vector product
+            yHy = np.dot(y, Hy)       # Scalar
+            
+            # The scalar coefficient for the s*s^T term
+            rho_inv = ys              # Just to match notation, this is 1/rho
+            coeff = (rho_inv + yHy) / (rho_inv * rho_inv)
+            
+            # Update H in place or create new
+            # Term 1: (s s^T) part
+            H += coeff * np.outer(s, s)
+            
+            # Term 2: The cross terms (Hy s^T) and (s (Hy)^T)
+            # Note: H is symmetric, so (Hy)^T is y^T H
+            cross_term = np.outer(Hy, s)
+            # We enforce symmetry explicitly by adding the transpose
+            H -= (cross_term + cross_term.T) / rho_inv
+            
+        else:
+            # SAFETY RESET:
+            # If curvature is non-positive (or extremely small), the BFGS update 
+            # would make H unstable or indefinite. 
+            # We reset H to Identity to perform a steepset descent step next time.
+            # This "un-sticks" the solver if it hits a bad patch.
+            H = np.eye(n)
         
         # Track the history
         hist["f"].append(f_new)
