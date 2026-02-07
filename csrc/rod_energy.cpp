@@ -260,7 +260,7 @@ void rod_energy_grad(
             E += 4.0 * eps * (inv12 - inv6) + eps;
 
             // Force magnitude: dU/dr = 24 * eps * (2*inv12 - inv6) / r
-            double dUdr = 24.0 * eps * (2.0 * inv12 - inv6) / dist;
+            double dUdr = 24.0 * eps * (inv6 - 2.0 * inv12) / dist;
 
             // Directional components
             double rx0 = (xi0 + u_best * di0) - (xj0 + v_best * dj0);
