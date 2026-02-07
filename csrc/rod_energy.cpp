@@ -277,20 +277,22 @@ void rod_energy_grad(
 
             // 4. Distribute forces to the 4 involved nodes
             // Segment i: nodes (i, i1)
-            addg(i,  0, -(1.0 - u_best) * fx0);
-            addg(i,  1, -(1.0 - u_best) * fx1);
-            addg(i,  2, -(1.0 - u_best) * fx2);
-            addg(i1, 0, -u_best * fx0);
-            addg(i1, 1, -u_best * fx1);
-            addg(i1, 2, -u_best * fx2);
+            addg(i,  0,  (1.0 - u_best) * fx0);
+            addg(i,  1,  (1.0 - u_best) * fx1);
+            addg(i,  2,  (1.0 - u_best) * fx2);
+
+            addg(i1, 0,  u_best * fx0);
+            addg(i1, 1,  u_best * fx1);
+            addg(i1, 2,  u_best * fx2);
 
             // Segment j: nodes (j, j1)
-            addg(j,  0, (1.0 - v_best) * fx0);
-            addg(j,  1, (1.0 - v_best) * fx1);
-            addg(j,  2, (1.0 - v_best) * fx2);
-            addg(j1, 0, v_best * fx0);
-            addg(j1, 1, v_best * fx1);
-            addg(j1, 2, v_best * fx2);
+            addg(j,  0, -(1.0 - v_best) * fx0);
+            addg(j,  1, -(1.0 - v_best) * fx1);
+            addg(j,  2, -(1.0 - v_best) * fx2);
+
+            addg(j1, 0, -v_best * fx0);
+            addg(j1, 1, -v_best * fx1);
+            addg(j1, 2, -v_best * fx2);
         }
     }
 
