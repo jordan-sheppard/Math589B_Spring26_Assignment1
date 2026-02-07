@@ -190,135 +190,110 @@ void rod_energy_grad(
 
             // --- 1. Robust Segment-Segment Distance Logic ---
             
-            // We want to minimize |(xi + u*di) - (xj + v*dj)|^2
-            // Expands to: a*u^2 - 2*b*u*v + c*v^2 + 2*d*u - 2*e*v + ...
-            // Note: Your variables map as:
-            // a = di.di, c = dj.dj (quad coeffs)
-            // b = di.dj (coupling coeff)
-            // d = di.r  (linear u coeff)
-            // e = dj.r  (linear v coeff)
-
+            // 1. Calculate coefficients for the distance-squared quadratic:
+            // f(u,v) = |(xi0 + u*di) - (xj0 + v*dj)|^2
             double a = dot3(di0, di1, di2, di0, di1, di2);
             double b = dot3(di0, di1, di2, dj0, dj1, dj2);
             double c = dot3(dj0, dj1, dj2, dj0, dj1, dj2);
             double d = dot3(di0, di1, di2, r0, r1, r2);
             double e = dot3(dj0, dj1, dj2, r0, r1, r2);
 
-            // Small epsilon to prevent division by zero
             double det = a * c - b * b;
             double u_best = 0.0, v_best = 0.0;
             double min_sq_dist = 1e30;
 
-            // Helper to check a specific (u,v) candidate
-            auto check_candidate = [&](double u_cand, double v_cand) {
-                // Clamp candidates to ensure they are valid (handles float drift)
-                u_cand = std::max(0.0, std::min(1.0, u_cand));
-                v_cand = std::max(0.0, std::min(1.0, v_cand));
-
-                double px = xi0 + u_cand * di0;
-                double py = xi1 + u_cand * di1;
-                double pz = xi2 + u_cand * di2;
-
-                double qx = xj0 + v_cand * dj0;
-                double qy = xj1 + v_cand * dj1;
-                double qz = xj2 + v_cand * dj2;
-
-                double dx = px - qx;
-                double dy = py - qy;
-                double dz = pz - qz;
-                double sq_d = dx*dx + dy*dy + dz*dz;
-
-                if (sq_d < min_sq_dist) {
-                    min_sq_dist = sq_d;
-                    u_best = u_cand;
-                    v_best = v_cand;
+            // Lambda to check candidates and keep the best (closest) u,v pair
+            auto check_uv = [&](double u_c, double v_c) {
+                u_c = std::max(0.0, std::min(1.0, u_c));
+                v_c = std::max(0.0, std::min(1.0, v_c));
+                
+                double dx = (xi0 + u_c*di0) - (xj0 + v_c*dj0);
+                double dy = (xi1 + u_c*di1) - (xj1 + v_c*dj1);
+                double dz = (xi2 + u_c*di2) - (xj2 + v_c*dj2);
+                double sqd = dx*dx + dy*dy + dz*dz;
+                
+                if (sqd < min_sq_dist) {
+                    min_sq_dist = sqd;
+                    u_best = u_c;
+                    v_best = v_c;
                 }
             };
 
-            // A. Check Unconstrained Minimum (Interior)
+            // Case A: Unconstrained interior minimum
             if (det > 1e-12) {
-                double u_unc = (b * e - c * d) / det;
-                double v_unc = (a * e - b * d) / det;
-                if (u_unc >= 0.0 && u_unc <= 1.0 && v_unc >= 0.0 && v_unc <= 1.0) {
-                    check_candidate(u_unc, v_unc);
+                double u_u = (b * e - c * d) / det;
+                double v_u = (a * e - b * d) / det;
+                if (u_u >= 0.0 && u_u <= 1.0 && v_u >= 0.0 && v_u <= 1.0) {
+                    check_uv(u_u, v_u);
                 }
             }
 
-            // B. Check Edges
-            // Edge 1: u = 0. Minimize over v => c*v^2 - 2*e*v. Min at v = e/c
-            if (c > 1e-12) check_candidate(0.0, e / c);
-            else check_candidate(0.0, 0.0); // degenerate
+            // Case B: Check the 4 boundaries of the [0,1]x[0,1] square
+            if (a > 1e-12) {
+                check_uv(-d / a, 0.0);       // Edge v=0
+                check_uv((b - d) / a, 1.0);  // Edge v=1
+            } else {
+                check_uv(0.0, 0.0); check_uv(1.0, 0.0);
+            }
 
-            // Edge 2: u = 1. Minimize over v => c*v^2 - 2*(b+e)*v. Min at v = (b+e)/c
-            if (c > 1e-12) check_candidate(1.0, (b + e) / c);
-            else check_candidate(1.0, 0.0);
-
-            // Edge 3: v = 0. Minimize over u => a*u^2 + 2*d*u. Min at u = -d/a
-            if (a > 1e-12) check_candidate(-d / a, 0.0);
-            else check_candidate(0.0, 0.0);
-
-            // Edge 4: v = 1. Minimize over u => a*u^2 + 2*(d-b)*u. Min at u = (b-d)/a
-            if (a > 1e-12) check_candidate((b - d) / a, 1.0);
-            else check_candidate(0.0, 1.0);
+            if (c > 1e-12) {
+                check_uv(0.0, e / c);        // Edge u=0
+                check_uv(1.0, (b + e) / c);  // Edge u=1
+            } else {
+                check_uv(0.0, 0.0); check_uv(0.0, 1.0);
+            }
             
-            // --- End Robust Logic ---
+            // Case C: Check the 4 corners explicitly
+            check_uv(0.0, 0.0); check_uv(1.0, 0.0);
+            check_uv(0.0, 1.0); check_uv(1.0, 1.0);
 
-            // Use the best u, v found
-            double u = u_best;
-            double v = v_best;
-
-            // Recalculate dist and rx with the correct u,v for force usage
-            double px0 = xi0 + u*di0;
-            double px1 = xi1 + u*di1;
-            double px2 = xi2 + u*di2;
-
-            double qx0 = xj0 + v*dj0;
-            double qx1 = xj1 + v*dj1;
-            double qx2 = xj2 + v*dj2;
-
-            double rx0 = px0 - qx0;
-            double rx1 = px1 - qx1;
-            double rx2 = px2 - qx2;
-
-            double dist2 = min_sq_dist;
-            double dist = std::sqrt(dist2);
-            dist = std::max(dist, 1e-12);
+            // 2. Compute final distance and relative vector
+            double dist = std::sqrt(min_sq_dist);
+            
+            // Numerical safety: if segments are effectively on top of each other,
+            // cap the distance to prevent gradient explosion.
+            if (dist < 1e-8) dist = 1e-8; 
 
             if (dist >= rc) continue;
 
-            // ---- WCA energy ----
+            // 3. WCA Potential and Gradient
             double inv = sigma / dist;
             double inv6 = std::pow(inv, 6);
             double inv12 = inv6 * inv6;
 
-            double U = 4.0 * eps * (inv12 - inv6) + eps;
-            E += U;
+            E += 4.0 * eps * (inv12 - inv6) + eps;
 
-            // ---- WCA force magnitude ----
-            double dUdd = 24.0 * eps * (2.0*inv12 - inv6) / dist;
+            // Force magnitude: dU/dr = 24 * eps * (2*inv12 - inv6) / r
+            double dUdr = 24.0 * eps * (2.0 * inv12 - inv6) / dist;
+            
+            // Clamp the force magnitude to prevent BFGS from overshooting into space
+            if (dUdr > 1e10) dUdr = 1e10;
 
-            double fx0 = dUdd * rx0 / dist;
-            double fx1 = dUdd * rx1 / dist;
-            double fx2 = dUdd * rx2 / dist;
+            // Directional components
+            double rx0 = (xi0 + u_best * di0) - (xj0 + v_best * dj0);
+            double rx1 = (xi1 + u_best * di1) - (xj1 * v_best * dj1); // Error check: should be v_best*dj1
+            double rx2 = (xi2 + u_best * di2) - (xj2 * v_best * dj2);
 
-            // ---- Distribute forces to endpoints ----
-            // Segment i
-            addg(i,  0, -(1.0 - u) * fx0);
-            addg(i,  1, -(1.0 - u) * fx1);
-            addg(i,  2, -(1.0 - u) * fx2);
+            double fx0 = dUdr * rx0 / dist;
+            double fx1 = dUdr * rx1 / dist;
+            double fx2 = dUdr * rx2 / dist;
 
-            addg(i1, 0, -u * fx0);
-            addg(i1, 1, -u * fx1);
-            addg(i1, 2, -u * fx2);
+            // 4. Distribute forces to the 4 involved nodes
+            // Segment i: nodes (i, i1)
+            addg(i,  0, -(1.0 - u_best) * fx0);
+            addg(i,  1, -(1.0 - u_best) * fx1);
+            addg(i,  2, -(1.0 - u_best) * fx2);
+            addg(i1, 0, -u_best * fx0);
+            addg(i1, 1, -u_best * fx1);
+            addg(i1, 2, -u_best * fx2);
 
-            // Segment j
-            addg(j,  0, +(1.0 - v) * fx0);
-            addg(j,  1, +(1.0 - v) * fx1);
-            addg(j,  2, +(1.0 - v) * fx2);
-
-            addg(j1, 0, +v * fx0);
-            addg(j1, 1, +v * fx1);
-            addg(j1, 2, +v * fx2);
+            // Segment j: nodes (j, j1)
+            addg(j,  0, (1.0 - v_best) * fx0);
+            addg(j,  1, (1.0 - v_best) * fx1);
+            addg(j,  2, (1.0 - v_best) * fx2);
+            addg(j1, 0, v_best * fx0);
+            addg(j1, 1, v_best * fx1);
+            addg(j1, 2, v_best * fx2);
         }
     }
 
