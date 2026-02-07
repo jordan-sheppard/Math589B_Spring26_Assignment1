@@ -246,7 +246,7 @@ void rod_energy_grad(
                 // Vector = wca_factor * r_vec
                 // Because wca_factor is negative, this vector points TOWARDS the other segment.
                 for (int k = 0; k < 3; ++k) {
-                    double g_val = wca_factor * r_vec[k];
+                    double g_val = 2 * wca_factor * r_vec[k];
 
                     // Segment i (barycentric distribution)
                     addg(i,   k, (1.0 - u_star) * g_val);
