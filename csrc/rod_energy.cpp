@@ -260,16 +260,16 @@ void rod_energy_grad(
             E += 4.0 * eps * (inv12 - inv6) + eps;
 
             // Force magnitude: dU/dr = 24 * eps * (2*inv12 - inv6) / r
-            double dUdr = 24.0 * eps * (inv6 - 2.0 * inv12) / dist;
+            double dUdr = 24.0 * eps * (2.0 * inv12 - inv6) / dist;
 
             // Directional components
             double rx0 = (xi0 + u_best * di0) - (xj0 + v_best * dj0);
             double rx1 = (xi1 + u_best * di1) - (xj1 + v_best * dj1);
             double rx2 = (xi2 + u_best * di2) - (xj2 + v_best * dj2);
 
-            double fx0 = dUdr * rx0 / dist;
-            double fx1 = dUdr * rx1 / dist;
-            double fx2 = dUdr * rx2 / dist;
+            double fx0 = 2.0 * dUdr * rx0 / dist;
+            double fx1 = 2.0 * dUdr * rx1 / dist;
+            double fx2 = 2.0 * dUdr * rx2 / dist;
 
             // 4. Distribute forces to the 4 involved nodes
             // Segment i: nodes (i, i1)
