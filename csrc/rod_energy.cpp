@@ -188,29 +188,86 @@ void rod_energy_grad(
             double r1 = xi1 - xj1;
             double r2 = xi2 - xj2;
 
-            double a = dot3(di0,di1,di2, di0,di1,di2);
-            double b = dot3(di0,di1,di2, dj0,dj1,dj2);
-            double c = dot3(dj0,dj1,dj2, dj0,dj1,dj2);
-            double d = dot3(di0,di1,di2, r0,r1,r2);
-            double e = dot3(dj0,dj1,dj2, r0,r1,r2);
+            // --- 1. Robust Segment-Segment Distance Logic ---
+            
+            // We want to minimize |(xi + u*di) - (xj + v*dj)|^2
+            // Expands to: a*u^2 - 2*b*u*v + c*v^2 + 2*d*u - 2*e*v + ...
+            // Note: Your variables map as:
+            // a = di.di, c = dj.dj (quad coeffs)
+            // b = di.dj (coupling coeff)
+            // d = di.r  (linear u coeff)
+            // e = dj.r  (linear v coeff)
 
-            double denom = a*c - b*b;
+            double a = dot3(di0, di1, di2, di0, di1, di2);
+            double b = dot3(di0, di1, di2, dj0, dj1, dj2);
+            double c = dot3(dj0, dj1, dj2, dj0, dj1, dj2);
+            double d = dot3(di0, di1, di2, r0, r1, r2);
+            double e = dot3(dj0, dj1, dj2, r0, r1, r2);
 
-            double u, v;
-            if (denom > 1e-12) {
-                u = (b*e - c*d) / denom;
-                v = (a*e - b*d) / denom;
-            } else {
-                // Nearly parallel segments
-                u = 0.0;
-                v = (b > c ? d/b : e/c);
+            // Small epsilon to prevent division by zero
+            double det = a * c - b * b;
+            double u_best = 0.0, v_best = 0.0;
+            double min_sq_dist = 1e30;
+
+            // Helper to check a specific (u,v) candidate
+            auto check_candidate = [&](double u_cand, double v_cand) {
+                // Clamp candidates to ensure they are valid (handles float drift)
+                u_cand = std::max(0.0, std::min(1.0, u_cand));
+                v_cand = std::max(0.0, std::min(1.0, v_cand));
+
+                double px = xi0 + u_cand * di0;
+                double py = xi1 + u_cand * di1;
+                double pz = xi2 + u_cand * di2;
+
+                double qx = xj0 + v_cand * dj0;
+                double qy = xj1 + v_cand * dj1;
+                double qz = xj2 + v_cand * dj2;
+
+                double dx = px - qx;
+                double dy = py - qy;
+                double dz = pz - qz;
+                double sq_d = dx*dx + dy*dy + dz*dz;
+
+                if (sq_d < min_sq_dist) {
+                    min_sq_dist = sq_d;
+                    u_best = u_cand;
+                    v_best = v_cand;
+                }
+            };
+
+            // A. Check Unconstrained Minimum (Interior)
+            if (det > 1e-12) {
+                double u_unc = (b * e - c * d) / det;
+                double v_unc = (a * e - b * d) / det;
+                if (u_unc >= 0.0 && u_unc <= 1.0 && v_unc >= 0.0 && v_unc <= 1.0) {
+                    check_candidate(u_unc, v_unc);
+                }
             }
 
-            // Clamp to [0,1]
-            u = std::min(1.0, std::max(0.0, u));
-            v = std::min(1.0, std::max(0.0, v));
+            // B. Check Edges
+            // Edge 1: u = 0. Minimize over v => c*v^2 - 2*e*v. Min at v = e/c
+            if (c > 1e-12) check_candidate(0.0, e / c);
+            else check_candidate(0.0, 0.0); // degenerate
 
-            // Closest points
+            // Edge 2: u = 1. Minimize over v => c*v^2 - 2*(b+e)*v. Min at v = (b+e)/c
+            if (c > 1e-12) check_candidate(1.0, (b + e) / c);
+            else check_candidate(1.0, 0.0);
+
+            // Edge 3: v = 0. Minimize over u => a*u^2 + 2*d*u. Min at u = -d/a
+            if (a > 1e-12) check_candidate(-d / a, 0.0);
+            else check_candidate(0.0, 0.0);
+
+            // Edge 4: v = 1. Minimize over u => a*u^2 + 2*(d-b)*u. Min at u = (b-d)/a
+            if (a > 1e-12) check_candidate((b - d) / a, 1.0);
+            else check_candidate(0.0, 1.0);
+            
+            // --- End Robust Logic ---
+
+            // Use the best u, v found
+            double u = u_best;
+            double v = v_best;
+
+            // Recalculate dist and rx with the correct u,v for force usage
             double px0 = xi0 + u*di0;
             double px1 = xi1 + u*di1;
             double px2 = xi2 + u*di2;
@@ -223,7 +280,7 @@ void rod_energy_grad(
             double rx1 = px1 - qx1;
             double rx2 = px2 - qx2;
 
-            double dist2 = rx0*rx0 + rx1*rx1 + rx2*rx2;
+            double dist2 = min_sq_dist;
             double dist = std::sqrt(dist2);
             dist = std::max(dist, 1e-12);
 
