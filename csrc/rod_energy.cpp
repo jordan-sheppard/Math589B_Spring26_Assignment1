@@ -265,14 +265,11 @@ void rod_energy_grad(
 
             // Force magnitude: dU/dr = 24 * eps * (2*inv12 - inv6) / r
             double dUdr = 24.0 * eps * (2.0 * inv12 - inv6) / dist;
-            
-            // Clamp the force magnitude to prevent BFGS from overshooting into space
-            if (dUdr > 1e10) dUdr = 1e10;
 
             // Directional components
             double rx0 = (xi0 + u_best * di0) - (xj0 + v_best * dj0);
-            double rx1 = (xi1 + u_best * di1) - (xj1 * v_best * dj1); // Error check: should be v_best*dj1
-            double rx2 = (xi2 + u_best * di2) - (xj2 * v_best * dj2);
+            double rx1 = (xi1 + u_best * di1) - (xj1 + v_best * dj1);
+            double rx2 = (xi2 + u_best * di2) - (xj2 + v_best * dj2);
 
             double fx0 = dUdr * rx0 / dist;
             double fx1 = dUdr * rx1 / dist;
