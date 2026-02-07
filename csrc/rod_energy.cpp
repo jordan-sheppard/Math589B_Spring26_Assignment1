@@ -160,7 +160,8 @@ void rod_energy_grad(
 
         double R = SIGMA_SQ / d2; 
         double R3 = R * R * R;      
-        double R6 = R3 * R3;        
+        double R6 = R3 * R3;
+        double d = std::sqrt(d2);        
 
         *e_val = 4.0 * eps * (R6 - R3) + eps;
 
@@ -170,7 +171,7 @@ void rod_energy_grad(
         // Since R^3 < 2R^6 for d < cutoff, this factor is NEGATIVE.
         // Gradient vector = K * r_vec.
         // Since r_vec points OUT, a negative factor makes the gradient point IN (uphill).
-        *g_fac = (24.0 * eps / d2) * (R3 - 2.0 * R6);
+        *g_fac = (24.0 * eps / d) * (R3 - 2.0 * R6);
         
         return true;
     };
@@ -178,7 +179,7 @@ void rod_energy_grad(
     // Loop unique pairs of SEGMENTS (not nodes!)
     for (int i = 0; i < N; ++i) {
         // j starts at i+1 to avoid double counting
-        for (int j = i + 1; j < N; ++j) {
+        for (int j = i + 3; j < N; ++j) {
             
             // 1. ROBUST EXCLUSION
             // Calculate distance in both directions around the ring
